@@ -50,13 +50,61 @@ class OptionDataAnalyzer:
         options_summary.rename(columns={"strike": "strike_price"}, inplace=True)
         return options_summary[["instrument_name", "strike_price", "side", "bid/ask"]]
 
+    def calculate_margin_and_premium(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calculate margin required and premium earned based on the option data.
+
+        Parameters:
+            data (pd.DataFrame): DataFrame returned by get_option_chain_data.
+
+        Returns:
+            pd.DataFrame: Modified DataFrame with margin_required and premium_earned.
+        """
+        lot_size = 100  # mocked
+        margin_percentage = 0.10  # mocked
+        margin_required_list = []
+        premium_earned_list = []
+
+        for _, row in data.iterrows():
+            bid_ask_price = row["bid/ask"]
+            premium_earned = bid_ask_price * lot_size
+            premium_earned_list.append(premium_earned)
+            margin_required = bid_ask_price * margin_percentage * lot_size
+            margin_required_list.append(margin_required)
+
+        data["margin_required"] = margin_required_list
+        data["premium_earned"] = premium_earned_list
+        return data
+
+    def _is_valid_date(self, date_str: str) -> bool:
+        # Check if the provided date string is in valid YYYY-MM-DD format.
+        try:
+            datetime.strptime(date_str, "%Y-%m-%d")
+            return True
+        except ValueError:
+            return False
+
+
+def display_table(data: pd.DataFrame):
+    table = Table(title="Option Chain Data")
+
+    for column in data.columns:
+        table.add_column(column)
+
+    for _, row in data.iterrows():
+        formatted_row = [
+            f"{value:.2f}" if isinstance(value, float) else str(value) for value in row
+        ]
+        table.add_row(*formatted_row)
+    console = Console()
+    console.print(table)
 
 
 def main():
     console = Console()
     console.print("[bold green]Welcome to Option Data Analyzer![/bold green]")
 
-    instrument_name = console.input("Enter the instrument name (e.g., 'MSFT'): ")
+    instrument_name = console.input("Enter the instrument name (e.g., 'NSE:NIFTY'): ")
     expiry_date = console.input("Enter the expiry date (YYYY-MM-DD): ")
     side = (
         console.input("Enter the option type ('PE' for Put, 'CE' for Call): ")
@@ -65,6 +113,15 @@ def main():
     )
 
     analyzer = OptionDataAnalyzer(instrument_name)
+
+    try:
+        option_data = analyzer.get_option_chain_data(expiry_date, side)
+        option_data_with_calculations = analyzer.calculate_margin_and_premium(
+            option_data
+        )
+        display_table(option_data_with_calculations)
+    except ValueError as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
 
 
 if __name__ == "__main__":
