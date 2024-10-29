@@ -1,0 +1,4 @@
+rich
+yfinance
+unittest
+pytest
