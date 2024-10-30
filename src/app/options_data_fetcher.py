@@ -1,128 +1,190 @@
-import yfinance as yf
+import requests as req
 import pandas as pd
-from rich.console import Console
-from rich.table import Table
+import time
 from datetime import datetime
+from typing import Optional
+from rich.console import Console
+from rich.prompt import Prompt
+from rich.table import Table
+from rich import box
 
+console = Console()
 
 class OptionDataAnalyzer:
-    def __init__(self, instrument_name: str):
-        self.instrument_name = instrument_name
-        self.stock = yf.Ticker(instrument_name)
-
-    def get_option_chain_data(self, expiry_date: str, side: str) -> pd.DataFrame:
+    def get_option_chain_data(self, instrument_name: str, expiry_date: str, side: str) -> pd.DataFrame:
         """
-        Retrieve option chain data for the specified expiry date and side.
-
+        Fetch option chain data from NSE website based on input parameters.
+        
         Parameters:
-            expiry_date (str): Expiration date in YYYY-MM-DD format.
-            side (str): Option type ("PE" for Put and "CE" for Call).
-
+            instrument_name (str): The name of the instrument (e.g., NIFTY, BANKNIFTY).
+            expiry_date (str): The expiration date of the options in YYYY-MM-DD format.
+            side (str): The option type ('PE' for Put, 'CE' for Call).
+        
         Returns:
-            pd.DataFrame: DataFrame containing instrument_name, strike_price, side, and bid/ask.
+            pd.DataFrame: DataFrame containing the instrument name, strike price, option side, and bid/ask price.
         """
-        if not self._is_valid_date(expiry_date):
-            raise ValueError("Invalid date format. Please use YYYY-MM-DD.")
+        try:
+            expiry_date_formatted = datetime.strptime(expiry_date, "%Y-%m-%d").strftime("%d-%b-%Y")
+        except ValueError:
+            console.print("[red]Invalid date format. Please use YYYY-MM-DD.[/red]")
+            raise ValueError("Invalid date format")
 
-        available_expiries = self.stock.options
+        url = f"https://www.nseindia.com/api/option-chain-indices?symbol={instrument_name}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.61 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate",
+            "Host": "www.nseindia.com",
+        }
+        
+        session = req.Session()
+        session.get("https://www.nseindia.com", headers=headers)
+        data_list = []
 
-        if expiry_date not in available_expiries:
-            raise ValueError(
-                f"Expiration '{expiry_date}' cannot be found. Available expirations are: {available_expiries}"
-            )
+        for attempt in range(3):
+            try:
+                response = session.get(url, headers=headers)
+                if response.status_code == 200 and response.text.startswith("{") and response.text.endswith("}"):
+                    data = response.json()
 
-        option_chain = self.stock.option_chain(expiry_date)
+                    if not data:
+                        console.print("[red]No data retrieved. Check your inputs or try again later.[/red]")
+                        return pd.DataFrame(columns=["instrument_name", "strike_price", "side", "bid/ask"])
 
-        if side == "PE":
-            options_data = option_chain.puts
-            options_data["bid/ask"] = options_data["bid"]
-        elif side == "CE":
-            options_data = option_chain.calls
-            options_data["bid/ask"] = options_data["ask"]
-        else:
-            raise ValueError("Invalid side value. Use 'PE' for Put or 'CE' for Call.")
 
-        options_summary = (
-            options_data.groupby("strike").agg({"bid/ask": "max"}).reset_index()
-        )
-        options_summary["instrument_name"] = self.instrument_name
-        options_summary["side"] = side
-        options_summary.rename(columns={"strike": "strike_price"}, inplace=True)
-        return options_summary[["instrument_name", "strike_price", "side", "bid/ask"]]
+                    if "records" not in data or "data" not in data["records"]:
+                        console.print(f"[red]Instrument '{instrument_name}' not found. Please check the instrument name.[/red]")
+                        raise TypeError("Invalid response structure")
+
+                    option_data = data["records"]["data"]
+
+                    for item in option_data:
+                        if item["expiryDate"] == expiry_date_formatted:
+                            strike_price = item["strikePrice"]
+                            if side not in ["PE", "CE"]:
+                                console.print(f"[red]Invalid option side '{side}'. Please use 'PE' or 'CE'.[/red]")
+                                raise ValueError(f"Invalid option side: {side}")
+                            if side == "PE" and "PE" in item:
+                                bid_price = item["PE"].get("bidprice", 0)
+                                data_list.append({
+                                    "instrument_name": instrument_name,
+                                    "strike_price": strike_price,
+                                    "side": "PE",
+                                    "bid/ask": round(bid_price, 2)
+                                })
+                            elif side == "CE" and "CE" in item:
+                                ask_price = item["CE"].get("askPrice", 0)
+                                data_list.append({
+                                    "instrument_name": instrument_name,
+                                    "strike_price": strike_price,
+                                    "side": "CE",
+                                    "bid/ask": round(ask_price, 2)
+                                })
+                    
+                    return pd.DataFrame(data_list)
+                else:
+                    console.print(f"[red]Failed to retrieve data: {response.status_code}[/red]")
+            except req.RequestException as e:
+                console.print(f"[red]Request failed: {e}[/red]")
+            except ValueError as ve:
+                console.print(f"[red]Failed to process data: {ve}[/red]")
+                break
+            time.sleep(2)
+
+        console.print("[red]Failed to retrieve valid data after multiple attempts.[/red]")
+        return pd.DataFrame(columns=["instrument_name", "strike_price", "side", "bid/ask"])
 
     def calculate_margin_and_premium(self, data: pd.DataFrame) -> pd.DataFrame:
         """
-        Calculate margin required and premium earned based on the option data.
-
+        Calculate margin and premium earned for each option in the DataFrame.
+        
         Parameters:
-            data (pd.DataFrame): DataFrame returned by get_option_chain_data.
-
+            data (pd.DataFrame): DataFrame containing option chain data.
+        
         Returns:
-            pd.DataFrame: Modified DataFrame with margin_required and premium_earned.
+            pd.DataFrame: DataFrame with additional columns for margin and premium.
         """
-        lot_size = 100  # mocked
-        margin_percentage = 0.10  # mocked
-        margin_required_list = []
-        premium_earned_list = []
-
-        for _, row in data.iterrows():
-            bid_ask_price = row["bid/ask"]
-            premium_earned = bid_ask_price * lot_size
-            premium_earned_list.append(premium_earned)
-            margin_required = bid_ask_price * margin_percentage * lot_size
-            margin_required_list.append(margin_required)
-
-        data["margin_required"] = margin_required_list
-        data["premium_earned"] = premium_earned_list
+        
+        try:
+            data["bid/ask"] = pd.to_numeric(data["bid/ask"], errors='raise')
+            data["margin_required"] = data["bid/ask"] * 300 # mock
+            data["premium_earned"] = data["bid/ask"] * 50 # mock
+        except ValueError as ve:
+            console.print(f"[red]Error: Invalid data type for 'bid/ask'. {ve}[/red]")
+            raise TypeError("Invalid data type for 'bid/ask'.") from ve
+        except Exception as e:
+            console.print(f"[red]Unexpected error calculating margin and premium: {e}[/red]")
+            raise 
         return data
 
-    def _is_valid_date(self, date_str: str) -> bool:
-        # Check if the provided date string is in valid YYYY-MM-DD format.
-        try:
-            datetime.strptime(date_str, "%Y-%m-%d")
-            return True
-        except ValueError:
-            return False
+
+def validate_expiry_date(expiry_date: str) -> Optional[str]:
+    try:
+        datetime.strptime(expiry_date, "%Y-%m-%d")
+        return expiry_date
+    except ValueError:
+        console.print("[red]Invalid expiry date format. Please enter the date in YYYY-MM-DD format.[/red]")
+        return None
 
 
-def display_table(data: pd.DataFrame):
-    table = Table(title="Option Chain Data")
+def run_cli():
+    console.print("[cyan bold]Options Data Fetcher[/cyan bold]\n")
+    instrument_name = Prompt.ask("[yellow]Enter the instrument name[/yellow] (e.g., NIFTY, BANKNIFTY)")
+    expiry_date = None
 
-    for column in data.columns:
-        table.add_column(column)
+    while not expiry_date:
+        expiry_date_input = Prompt.ask("[yellow]Enter the expiry date[/yellow] (in YYYY-MM-DD format)")
+        expiry_date = validate_expiry_date(expiry_date_input)
 
+    side = Prompt.ask("[yellow]Enter the option type[/yellow] ([green]PE[/green] for Put, [green]CE[/green] for Call)", choices=["PE", "CE"])
+
+    handler = OptionDataAnalyzer()
+    
+    console.print("\n[blue]Fetching option chain data...[/blue]")
+    try:
+        data = handler.get_option_chain_data(instrument_name, expiry_date, side)
+    except ValueError:
+        console.print("[red]Failed to retrieve option chain data due to invalid input. Exiting.[/red]")
+        return
+
+    if data.empty:
+        console.print("[red]No data retrieved. Check your inputs or try again later.[/red]")
+        return
+
+    table = Table(title="Option Chain Data", box=box.SQUARE)
+    table.add_column("Instrument", style="cyan", justify="center")
+    table.add_column("Strike Price", style="magenta", justify="center")
+    table.add_column("Side", style="green", justify="center")
+    table.add_column("Bid/Ask Price", style="yellow", justify="center")
+    
     for _, row in data.iterrows():
-        formatted_row = [
-            f"{value:.2f}" if isinstance(value, float) else str(value) for value in row
-        ]
-        table.add_row(*formatted_row)
-    console = Console()
+        table.add_row(str(row["instrument_name"]), str(row["strike_price"]), row["side"], f"{row['bid/ask']:.2f}")
+    
     console.print(table)
 
+    console.print("\n[blue]Calculating margin and premium...[/blue]")
+    data_with_margin = handler.calculate_margin_and_premium(data)
 
-def main():
-    console = Console()
-    console.print("[bold green]Welcome to Option Data Analyzer![/bold green]")
+    result_table = Table(title="Option Data with Margin and Premium", box=box.SQUARE)
+    result_table.add_column("Instrument", style="cyan", justify="center")
+    result_table.add_column("Strike Price", style="magenta", justify="center")
+    result_table.add_column("Side", style="green", justify="center")
+    result_table.add_column("Bid/Ask Price", style="yellow", justify="center")
+    result_table.add_column("Margin Required", style="bright_red", justify="center")
+    result_table.add_column("Premium Earned", style="bright_green", justify="center")
 
-    instrument_name = console.input("Enter the instrument name (e.g., 'NSE:NIFTY'): ")
-    expiry_date = console.input("Enter the expiry date (YYYY-MM-DD): ")
-    side = (
-        console.input("Enter the option type ('PE' for Put, 'CE' for Call): ")
-        .strip()
-        .upper()
-    )
-
-    analyzer = OptionDataAnalyzer(instrument_name)
-
-    try:
-        option_data = analyzer.get_option_chain_data(expiry_date, side)
-        option_data_with_calculations = analyzer.calculate_margin_and_premium(
-            option_data
+    for _, row in data_with_margin.iterrows():
+        result_table.add_row(
+            str(row["instrument_name"]),
+            str(row["strike_price"]),
+            row["side"],
+            f"{row['bid/ask']:.2f}",
+            f"{row['margin_required']:.2f}",
+            f"{row['premium_earned']:.2f}"
         )
-        display_table(option_data_with_calculations)
-    except ValueError as e:
-        console.print(f"[bold red]Error:[/bold red] {e}")
+    
+    console.print(result_table)
 
 
 if __name__ == "__main__":
-    main()
+    run_cli()
