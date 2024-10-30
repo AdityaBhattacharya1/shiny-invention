@@ -6,6 +6,21 @@ The **Option Data Analyzer** is a Python application that retrieves, processes, 
 
 For this project I have scraped the NSE website instead of using Upstox, Fyers, etc. APIs since my objective for this project was to create an application that could work absolutely decoupled to any one particular user. In the case of Upstox, Fyers, KiteConnect, etc., a user would have to enter their PAN card credentials and other sensitive data to third party providers just to access financial data; thus coupling the usage of the application to a user's sensitive data for API key generation. In spirit of financial independence and general open source software, I decided against using such third parties so that running this application would require _zero_ sign-ups/log-ins. Cheers!
 
+## File Structure
+
+```sh
+.
+├── README.md
+├── requirements.txt
+└── src
+    ├── __tests__
+    │   ├── __init__.py
+    │   └── test.py
+    └── app
+        ├── __init__.py
+        └── options_data_fetcher.py
+```
+
 ## Function Descriptions
 
 ### 1. `get_option_chain_data(self, expiry_date: str, side: str) -> pd.DataFrame`
@@ -98,7 +113,7 @@ The main function serves as the entry point for the application. It is also wher
 
 ## AI/LLM Usage
 
-I have used AI to better understand what option chains are and what possible free and open-source alternatives I had to using Upstox, Fyers, and other third party financial data providers. Additionally, I also used LLMs for the generation of this README file and add in relevant documentation on the basis of the code. Finally, I used LLM to hint me with possible edge cases for this application which I then used in unit testing.
+I have used ChatGPT to better understand what option chains are and what possible free and open-source alternatives I had to using Upstox, Fyers, and other third party financial data providers. Additionally, ChatGPT also helped me in the generation of this README file and add in relevant documentation on the basis of the code. Finally, I used ChatGPT to hint me with possible edge cases for this application which I then used in unit testing.
 
 ## Running the Application
 
