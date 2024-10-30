@@ -86,7 +86,7 @@ NIFTY          | 19600       | CE   | 160      | 1600            | 16000
 
 #### Purpose
 
-This function checks if a given date string is in the correct format (`YYYY-MM-DD`). If not, it attempts to convert it to the specific format.
+This function checks if a given date string is in the correct format (`YYYY-MM-DD`).
 
 #### Processing
 
